@@ -1,0 +1,10 @@
+# Framework & Runtime
+npm install express typescript ts-node @types/express @types/node
+# Database
+npm install pg @types/pg
+# Logging
+npm install winston
+# Config & Validation
+npm install dotenv class-validator class-transformer
+# DI Container (Contoh: tsyringe)
+npm install reflect-metadata tsyringe
