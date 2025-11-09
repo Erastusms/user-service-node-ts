@@ -1,52 +1,55 @@
 import { Request, Response } from 'express';
+import { asyncHandler } from '../../utils/asyncHandler';
 import { UserService } from '../../application/services/user.service';
-import { logger } from '../../core/logger';
-
-const service = new UserService();
+import { NotFoundError } from '../../middlewares/errorHandler';
+import { successResponse } from '../../utils/responseHandler';
 
 export class UserController {
-  async create(req: Request, res: Response) {
-    try {
-      const user = await service.createUser(req.body);
-      res.status(201).json({ success: true, data: user });
-    } catch (err: any) {
-      logger.error(`Create user error: ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
-    }
+  private userService: UserService;
+
+  constructor(userService: UserService) {
+    this.userService = userService;
   }
 
-  async findAll(req: Request, res: Response) {
-    const users = await service.getAllUsers();
-    res.json({ success: true, data: users });
-  }
+  createUser = asyncHandler(async (req: Request, res: Response) => {
+    const result = await this.userService.createUser(req.body);
+    return successResponse(
+      res,
+      'User created successfully',
+      result,
+      undefined,
+      201
+    );
+  });
 
-  async findById(req: Request, res: Response) {
-    try {
-      const user = await service.getUserById(req.params.id);
-      res.json({ success: true, data: user });
-    } catch (err: any) {
-      logger.error(`Find user error: ${err.message}`);
-      res.status(404).json({ success: false, message: err.message });
-    }
-  }
+  getUserById = asyncHandler(async (req: Request, res: Response) => {
+    const user = await this.userService.getUserById(req.params.id);
+    if (!user) throw new NotFoundError('User not found');
+    return successResponse(res, 'User fetched successfully', user);
+  });
 
-  async update(req: Request, res: Response) {
-    try {
-      const user = await service.updateUser(req.params.id, req.body);
-      res.json({ success: true, data: user });
-    } catch (err: any) {
-      logger.error(`Update user error: ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
-    }
-  }
+  getAllUsers = asyncHandler(async (_req: Request, res: Response) => {
+    const users = await this.userService.getAllUsers();
+    return successResponse(res, 'Users fetched successfully', users);
+  });
 
-  async delete(req: Request, res: Response) {
-    try {
-      await service.deleteUser(req.params.id);
-      res.json({ success: true, message: 'User deleted' });
-    } catch (err: any) {
-      logger.error(`Delete user error: ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
-    }
-  }
+  updateUser = asyncHandler(async (req: Request, res: Response) => {
+    const updated = await this.userService.updateUser(req.params.id, req.body);
+    if (!updated) throw new NotFoundError('User not found');
+    return successResponse(res, 'User updated successfully', updated);
+  });
+
+  deleteUser = asyncHandler(async (req: Request, res: Response) => {
+    const user = await this.userService.getUserById(req.params.id);
+    if (!user) throw new NotFoundError('User not found');
+
+    await this.userService.deleteUser(req.params.id);
+    return successResponse(
+      res,
+      'User deleted successfully',
+      null,
+      undefined,
+      204
+    );
+  });
 }
