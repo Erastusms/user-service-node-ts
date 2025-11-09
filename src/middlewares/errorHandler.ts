@@ -1,4 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
 import { errorResponse } from '../utils/responseHandler';
 import { logger } from '../core/logger';
 
@@ -58,29 +60,101 @@ export class ConflictError extends AppError {
   }
 }
 
-// Centralized error handler
+// 🟣 Prisma error normalization helper
+const parsePrismaError = (err: any): AppError => {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    // Known DB errors (constraint violation, missing relation, etc.)
+    switch (err.code) {
+      case 'P2002':
+        return new ConflictError(
+          'Duplicate field value violates unique constraint.'
+        );
+      case 'P2025':
+        return new NotFoundError('Record not found.');
+      default:
+        return new BadRequestError(
+          err.message.split('\n').pop()?.trim() || 'Database request error'
+        );
+    }
+  }
+
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    // Validation errors like invalid format / type mismatch
+    const cleaned =
+      err.message.split('\n').pop()?.trim() || 'Invalid data input';
+    return new ValidationError(cleaned);
+  }
+
+  if (err instanceof Prisma.PrismaClientUnknownRequestError) {
+    return new AppError('Unknown database error', 500);
+  }
+
+  return new AppError(err.message || 'Unhandled database error', 500);
+};
+
+// 🟣 Zod error normalization helper + express middleware to convert Zod errors
+const parseZodError = (err: ZodError): ValidationError => {
+  const errors = err.issues.map((issue) => ({
+    path: issue.path.length ? issue.path.join('.') : undefined,
+    message: issue.message,
+    code: issue.code,
+    params: (issue as any).params ?? undefined,
+  }));
+
+  return new ValidationError('Validation failed', { errors });
+};
+
+export const zodErrorMiddleware = (
+  err: any,
+  _req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  if (err instanceof ZodError) {
+    return next(parseZodError(err));
+  }
+  return next(err);
+};
+
+// 🟢 Centralized error handler
 export const errorHandler = (
   err: Error | AppError,
   req: Request,
   res: Response,
   _next: NextFunction
 ) => {
-  const statusCode = err instanceof AppError ? err.statusCode : 500;
-  const message = err.message || 'Internal server error';
+  let handledError: AppError;
+
+  if (err instanceof ZodError) {
+    handledError = parseZodError(err);
+  } else {
+    // Prisma error handler
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError ||
+      err instanceof Prisma.PrismaClientValidationError ||
+      err instanceof Prisma.PrismaClientUnknownRequestError
+    ) {
+      handledError = parsePrismaError(err);
+    } else if (err instanceof AppError) {
+      handledError = err;
+    } else {
+      handledError = new AppError(err.message || 'Internal server error', 500);
+    }
+  }
 
   logger.error({
     requestId: (req as any).requestId,
-    message: err.message,
-    stack: err.stack,
+    message: handledError.message,
+    stack: handledError.stack,
     path: req.originalUrl,
     method: req.method,
-    statusCode,
+    statusCode: handledError.statusCode,
   });
 
   return errorResponse(
     res,
-    message,
-    statusCode,
-    err instanceof AppError ? err.details : undefined
+    handledError.message,
+    handledError.statusCode,
+    handledError.details
   );
 };
